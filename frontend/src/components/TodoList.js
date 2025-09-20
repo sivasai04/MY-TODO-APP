@@ -9,13 +9,15 @@ const TodoList = () => {
   const [inputValue, setInputValue] = useState('');
   const todos = useSelector((state) => state.todo.todos);
   const { token, user } = useSelector((state) => state.auth);
+  const [refresh, setRefresh] = useState(true);
   const dispatch = useDispatch();
 
   const api = axios.create({
       baseURL: 'http://localhost:5000',
       withCredentials: true,
   });
-
+  
+  
   useEffect(() => {
     const fetchTodos = async () => {
       try {
@@ -24,11 +26,13 @@ const TodoList = () => {
       } catch (error) {
         console.error('Failed to fetch todos', error);
       }
+      console.log("sdfsdf");
     };
     if (token) {
       fetchTodos();
+
     }
-  }, [token, dispatch, api]);
+  }, [token, dispatch, refresh]);
 
   const handleAddTask = async () => {
     if (inputValue.trim() === '') return;
@@ -57,6 +61,7 @@ const TodoList = () => {
       try {
         const response = await api.put(`/todos/${id}`, { title: newTitle });
         dispatch(editTodo(response.data));
+        setRefresh(!refresh);
       } catch (error) {
         console.error('Failed to edit todo', error);
       }
@@ -93,8 +98,8 @@ const TodoList = () => {
             <span>{task.title}</span>
             <div className="task-actions">
               
-              <button className="edit-btn" onClick={() => handleEditTask(task.id, task.title)}>Edit</button>
-              <button className="delete-btn" onClick={() => handleDeleteTask(task.id)}>Delete</button>
+              <button className="edit-btn" onClick={() => handleEditTask(task._id, task.title)}>Edit</button>
+              <button className="delete-btn" onClick={() => handleDeleteTask(task._id)}>Delete</button>
             </div>
           </li>
         ))}

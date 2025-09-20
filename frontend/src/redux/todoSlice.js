@@ -15,12 +15,12 @@ const todoSlice = createSlice({
       state.todos.push(action.payload);
     },
     removeTodo(state, action) {
-      state.todos = state.todos.filter(todo => todo.id !== action.payload);
+      state.todos = state.todos.filter(todo => todo._id !== action.payload);
     },
 
     editTodo(state, action) {
       const { id, title } = action.payload;
-      const existingTodo = state.todos.find(todo => todo.id === id);
+      const existingTodo = state.todos.find(todo => todo._id === id);
       if (existingTodo) {
         existingTodo.title = title;
       }

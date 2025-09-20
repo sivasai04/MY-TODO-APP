@@ -7,10 +7,12 @@ Activity_ReduxAuth.pdf
 MernLab3-SLIDES.pdf
 
 2025202024_todoapp/
-
+2025202024_todoapp.zip
 backend/package-lock.json
 
 backend/todos.json
+backend/.env
+backend/notes.json
 
 backend/notes.json
 

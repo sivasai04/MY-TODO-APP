@@ -1,137 +1,139 @@
+require('dotenv').config(); // Load environment variables from .env file
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
+const mongoose = require('mongoose'); // Import mongoose
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 
+// Import Mongoose Models
+const User = require('./models/User');
+const Todo = require('./models/Todo');
+
 const app = express();
-const PORT = 5000;
-const JWT_SECRET = 'your-super-secret-key-that-is-long-and-secure'; 
+const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key';
 
-
-app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+// --- Middleware ---
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json());
-app.use(cookieParser()); 
+app.use(cookieParser());
+
+// --- Database Connection ---
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('MongoDB connected successfully.'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
 
-const USERS_DB_FILE = './users.json';
-const TODOS_DB_FILE = './todos.json';
-
-const readDB = (filePath) => {
-    try {
-        const data = fs.readFileSync(filePath, 'utf8');
-        return JSON.parse(data);
-    } catch (err) {
-        return []; 
-    }
-};
-
-const writeDB = (filePath, data) => {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-};
-
+// --- Authentication Middleware ---
 const authenticateToken = (req, res, next) => {
-    const token = req.cookies.token; 
-    if (!token) return res.sendStatus(401); 
+    const token = req.cookies.token;
+    if (!token) return res.sendStatus(401);
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403); 
+        if (err) return res.sendStatus(403);
         req.user = user;
         next();
     });
 };
 
+// --- Auth Routes ---
+app.post('/signup', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(400).json({ message: "User already exists" });
+        }
 
-app.post('/signup', (req, res) => {
-    const { email, password } = req.body;
-    const users = readDB(USERS_DB_FILE);
+        const hashedPassword = bcrypt.hashSync(password, 10);
+        const newUser = new User({ email, password: hashedPassword });
+        await newUser.save();
 
-    if (users.find(u => u.email === email)) {
-        return res.status(400).json({ message: "User already exists" });
+        const token = jwt.sign({ id: newUser._id, email: newUser.email }, JWT_SECRET, { expiresIn: '1h' });
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none' });
+        res.status(201).json({ token, user: { id: newUser._id, email: newUser.email } });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error during signup.' });
     }
-
-    const hashedPassword = bcrypt.hashSync(password, 8);
-    const newUser = { id: Date.now(), email, password: hashedPassword };
-    users.push(newUser);
-    writeDB(USERS_DB_FILE, users);
-    const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '1h' });
-    res.cookie('token', token, { httpOnly: true, secure: false, sameSite: 'strict' });
-    res.status(201).json({ token, user: { id: newUser.id, email: newUser.email } });
 });
 
 
-app.post('/signin', (req, res) => { 
-    const { email, password } = req.body;
-    const users = readDB(USERS_DB_FILE);
-    const user = users.find(u => u.email === email);
+app.post('/signin', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        const user = await User.findOne({ email });
+        if (!user || !bcrypt.compareSync(password, user.password)) {
+            return res.status(401).json({ message: "Invalid credentials" });
+        }
 
-    if (!user || !bcrypt.compareSync(password, user.password)) {
-        return res.status(401).json({ message: "Invalid credentials" });
+        const token = jwt.sign({ id: user._id, email: user.email }, JWT_SECRET, { expiresIn: '1h' });
+        // NOTE: For deployment, 'secure' should be true. For local testing with http, you might need it to be false.
+        res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none' });
+        res.json({ token, user: { id: user._id, email: user.email } });
+    } catch (error) {
+        res.status(500).json({ message: 'Server error during signin.' });
     }
-
-    const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '1h' });
-    res.cookie('token', token, { httpOnly: true, secure: false, sameSite: 'strict' }); 
-    res.json({ token, user: { id: user.id, email: user.email } });
 });
 
-app.post('/logout', (req, res) => { 
-    res.clearCookie('token');
+app.post('/logout', (req, res) => {
+    res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'none' });
     res.json({ message: "Logged out successfully" });
 });
 
 
-app.get('/todos', authenticateToken, (req, res) => {
-    const allTodos = readDB(TODOS_DB_FILE);
-    const userTodos = allTodos.filter(todo => todo.userId === req.user.id);
-    res.json(userTodos);
-});
-
-app.post('/todos', authenticateToken, (req, res) => { 
-    const { title } = req.body;
-    if (!title) return res.status(400).json({ message: "Title is required" });
-    
-    const allTodos = readDB(TODOS_DB_FILE);
-    const newTodo = { id: Date.now(), title, userId: req.user.id };
-    allTodos.push(newTodo);
-    writeDB(TODOS_DB_FILE, allTodos);
-    res.status(201).json(newTodo);
-});
-
-app.delete('/todos/:id', authenticateToken, (req, res) => { 
-    const todoId = parseInt(req.params.id);
-    let allTodos = readDB(TODOS_DB_FILE);
-
-    const todo = allTodos.find(t => t.id === todoId);
-    if (!todo || todo.userId !== req.user.id) {
-        return res.status(403).json({ message: "Forbidden: You do not own this todo" });
+// --- Protected Todo Routes ---
+app.get('/todos', authenticateToken, async (req, res) => {
+    try {
+        const userTodos = await Todo.find({ userId: req.user.id });
+        res.json(userTodos);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to fetch todos.' });
     }
-    
-    allTodos = allTodos.filter(t => t.id !== todoId);
-    writeDB(TODOS_DB_FILE, allTodos);
-    res.sendStatus(204); 
 });
 
-
-
-app.put('/todos/:id', authenticateToken, (req, res) => {
-    const todoId = parseInt(req.params.id);
-    const { title } = req.body;
-    let allTodos = readDB(TODOS_DB_FILE);
-
-    const todoIndex = allTodos.findIndex(t => t.id === todoId);
-
-    if (todoIndex === -1 || allTodos[todoIndex].userId !== req.user.id) {
-        return res.status(403).json({ message: "Forbidden or Todo not found" });
+app.post('/todos', authenticateToken, async (req, res) => {
+    try {
+        const { title } = req.body;
+        if (!title) return res.status(400).json({ message: "Title is required" });
+        
+        const newTodo = new Todo({ title, userId: req.user.id });
+        await newTodo.save();
+        res.status(201).json(newTodo);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to create todo.' });
     }
-    
-    allTodos[todoIndex].title = title;
-    writeDB(TODOS_DB_FILE, allTodos);
-    
-    res.json(allTodos[todoIndex]); 
+});
+
+app.put('/todos/:id', authenticateToken, async (req, res) => {
+    try {
+        const { title } = req.body;
+        const updatedTodo = await Todo.findOneAndUpdate(
+            { _id: req.params.id, userId: req.user.id }, // Find a todo by its ID and ensure it belongs to the user
+            { title },
+            { new: true } // Return the updated document
+        );
+        if (!updatedTodo) return res.status(404).json({ message: 'Todo not found or user not authorized.' });
+        res.json(updatedTodo);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to update todo.' });
+    }
 });
 
 
+app.delete('/todos/:id', authenticateToken, async (req, res) => {
+    try {
+        const deletedTodo = await Todo.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
+        if (!deletedTodo) return res.status(404).json({ message: 'Todo not found or user not authorized.' });
+        res.sendStatus(204);
+    } catch (error) {
+        res.status(500).json({ message: 'Failed to delete todo.' });
+    }
+});
+
+
+// --- Start Server ---
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
